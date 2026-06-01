@@ -19,7 +19,7 @@ ROWS, COLS = 9, 13
 d_lat = (BOUNDS["maxLat"] - BOUNDS["minLat"]) / ROWS
 d_lon = (BOUNDS["maxLon"] - BOUNDS["minLon"]) / COLS
 
-HARVEST_SECONDS = 300  # collect for 5 minutes per run
+HARVEST_SECONDS = 1800  # Updated to 30min after successful 5.
 
 def get_cell(lat, lon):
     r = int((lat - BOUNDS["minLat"]) / d_lat)
