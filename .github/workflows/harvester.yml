@@ -1,27 +1,28 @@
 name: AIS Harvester
-
+ 
 on:
   schedule:
-    - cron: '0 * * * *'  # every hour on the hour
-  workflow_dispatch:       # also lets you trigger manually from GitHub
-
+    - cron: '0 * * * *' 
+  workflow_dispatch:       
+ 
 jobs:
   harvest:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
+ 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
+ 
       - name: Install dependencies
         run: pip install websockets httpx
-
+ 
       - name: Run harvester
         env:
           AIS_API_KEY: ${{ secrets.AIS_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GFW_API_KEY: ${{ secrets.GFW_API_KEY }}
         run: python harvester.py
