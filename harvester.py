@@ -1,9 +1,3 @@
-"""
-Feldman AIS Harvester
-Runs hourly via GitHub Actions.
-Pulls live AIS data for Gryt bounding box, writes to Supabase.
-"""
-
 import asyncio
 import json
 import os
@@ -11,10 +5,10 @@ import websockets
 import httpx
 from datetime import datetime, timezone
 
-# --- Config (set these as GitHub Actions secrets) ---
+
 AIS_API_KEY   = os.environ["AIS_API_KEY"]
 SUPABASE_URL  = os.environ["SUPABASE_URL"]
-SUPABASE_KEY  = os.environ["SUPABASE_SERVICE_KEY"]  # service key, not anon
+SUPABASE_KEY  = os.environ["SUPABASE_SERVICE_KEY"]  
 
 BOUNDS = {
     "minLat": 57.85, "maxLat": 58.20,
@@ -66,7 +60,6 @@ async def harvest():
                     mmsi = str(m.get("MMSI", ""))
                     if not lat or not lon or not mmsi:
                         continue
-                    # dedupe per mmsi per run (one observation per vessel per hour is enough)
                     if mmsi in seen_mmsi:
                         continue
                     seen_mmsi.add(mmsi)
@@ -107,8 +100,8 @@ async def write_to_supabase(observations):
         "Prefer": "return=minimal"
     }
 
-    # batch insert
     async with httpx.AsyncClient() as client:
+        # batch insert
         resp = await client.post(
             f"{SUPABASE_URL}/rest/v1/vessel_observations",
             headers=headers,
@@ -120,13 +113,14 @@ async def write_to_supabase(observations):
         else:
             print(f"Insert failed: {resp.status_code} {resp.text}")
 
-    # cleanup old rows
-    cutoff = "now() - interval '30 days'"
-    await client.delete(
-        f"{SUPABASE_URL}/rest/v1/vessel_observations",
-        headers=headers,
-        params={"observed_at": f"lt.{cutoff}"}
-    )
+        cutoff = datetime.now(timezone.utc).strftime("%Y-%m-01T00:00:00+00:00")
+        del_resp = await client.delete(
+            f"{SUPABASE_URL}/rest/v1/vessel_observations",
+            headers=headers,
+            params={"observed_at": f"lt.{cutoff}"},
+            timeout=30
+        )
+        print(f"Cleanup status: {del_resp.status_code}")
 
 async def main():
     obs = await harvest()
