@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Feldman — Maritime Coverage Intelligence</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --white:      #ffffff;
+    --off-white:  #f8f7f4;
+    --khaki:      #ede9df;
+    --khaki-mid:  #d9d3c5;
+    --khaki-deep: #b8b0a0;
+    --blue:       #1f3a5c;
+    --blue-mid:   #2e5280;
+    --blue-light: #4a7aaa;
+    --blue-pale:  #d8e4f0;
+    --blue-tint:  #eef3f9;
+    --ink:        #1a2530;
+    --ink-mid:    #3a4a58;
+    --ink-light:  #6a7a88;
+    --border:     #d0cdc5;
+    --border-light: #e4e1d8;
+    --danger-text: #5c1f1f;
+    --danger-bg:   #f5e8e8;
+    --danger-border:#c8a0a0;
+    --warn-text:   #4a3010;
+    --warn-bg:     #f5f0e4;
+    --warn-border: #c8b888;
+    --ok-text:     #1a3828;
+    --ok-bg:       #e8f0eb;
+    --ok-border:   #90b8a0;
+    --font: 'DM Sans', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--off-white);
+    color: var(--ink);
+    font-family: var(--font);
+    height: 100vh;
+    display: grid;
+    grid-template-rows: 50px 1fr;
+    grid-template-columns: 1fr 288px;
+    overflow: hidden;
+    font-size: 13px;
+  }
+
+  header {
+    grid-column: 1 / -1;
+    background: var(--blue);
+    display: flex;
+    align-items: center;
+    padding: 0 22px;
+    gap: 28px;
+  }
+
+  .logo { font-size: 14px; font-weight: 500; letter-spacing: 0.22em; color: var(--white); text-transform: uppercase; }
+  .logo-rule { width: 1px; height: 22px; background: rgba(255,255,255,0.2); }
+  .logo-sub { font-size: 11px; font-weight: 300; color: rgba(255,255,255,0.55); letter-spacing: 0.06em; }
+
+  .header-stats { display: flex; gap: 28px; margin-left: auto; align-items: center; }
+  .hstat { display: flex; flex-direction: column; gap: 1px; }
+  .hstat-label { font-size: 9px; font-weight: 400; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(255,255,255,0.4); }
+  .hstat-value { font-size: 12px; font-weight: 400; color: rgba(255,255,255,0.88); letter-spacing: 0.02em; }
+
+  .conn-badge { display: flex; align-items: center; gap: 7px; padding: 5px 12px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.07); }
+  .conn-dot { width: 6px; height: 6px; border-radius: 50%; background: #7ab8a0; animation: breathe 2.5s ease-in-out infinite; flex-shrink: 0; }
+  .conn-dot.warn { background: #c8a858; animation: none; }
+  .conn-dot.off  { background: rgba(255,255,255,0.25); animation: none; }
+  @keyframes breathe { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .conn-text { font-size: 10px; font-weight: 400; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255,255,255,0.7); }
+
+  #map { background: var(--blue-tint); position: relative; }
+  .leaflet-container { background: var(--blue-tint); font-family: var(--font); }
+  .leaflet-tile-pane { filter: saturate(0.3) brightness(1.05) contrast(1.05); }
+  .leaflet-control-zoom { border: 1px solid var(--border) !important; border-radius: 0 !important; box-shadow: none !important; }
+  .leaflet-control-zoom a { background: var(--white) !important; color: var(--ink) !important; border-color: var(--border) !important; font-family: var(--font) !important; font-weight: 300 !important; border-radius: 0 !important; line-height: 26px !important; width: 26px !important; height: 26px !important; font-size: 16px !important; }
+
+  .map-stamp { position: absolute; top: 14px; left: 14px; z-index: 900; pointer-events: none; background: rgba(255,255,255,0.88); border: 1px solid var(--border); padding: 6px 10px; }
+  .map-stamp-title { font-size: 11px; font-weight: 500; color: var(--blue); letter-spacing: 0.1em; text-transform: uppercase; }
+  .map-stamp-sub { font-size: 9px; font-weight: 300; color: var(--ink-light); letter-spacing: 0.08em; margin-top: 1px; }
+
+  /* baseline status badge */
+  .baseline-badge { position: absolute; top: 14px; right: 14px; z-index: 900; background: rgba(255,255,255,0.88); border: 1px solid var(--border); padding: 6px 10px; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-light); }
+  .baseline-badge span { color: var(--blue); font-weight: 500; }
+
+  aside { background: var(--white); border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+  .s-block { padding: 14px 16px; border-bottom: 1px solid var(--border-light); flex-shrink: 0; }
+  .s-label { font-size: 9px; font-weight: 500; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-light); margin-bottom: 10px; }
+
+  .big-num { font-size: 38px; font-weight: 300; color: var(--blue); line-height: 1; letter-spacing: -0.01em; }
+  .big-sub { font-size: 10px; font-weight: 300; color: var(--ink-light); letter-spacing: 0.08em; margin-top: 3px; }
+
+  .legend-track { height: 3px; background: linear-gradient(to right, #3a7a58, #c8a858, #8b3030); margin-bottom: 6px; opacity: 0.75; }
+  .legend-labels { display: flex; justify-content: space-between; font-size: 9px; font-weight: 400; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-light); }
+
+  .p-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--border-light); }
+  .p-row:last-child { border-bottom: none; }
+  .p-num { font-size: 10px; font-weight: 400; color: var(--khaki-deep); width: 14px; flex-shrink: 0; text-align: right; }
+  .p-track { flex: 1; height: 2px; background: var(--khaki); }
+  .p-fill { height: 2px; transition: width 1.5s ease; }
+  .p-name { font-size: 11px; font-weight: 400; color: var(--ink-mid); min-width: 96px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .a-scroll { flex: 1; overflow-y: auto; padding: 10px 16px 16px; }
+  .a-scroll::-webkit-scrollbar { width: 2px; }
+  .a-scroll::-webkit-scrollbar-thumb { background: var(--border); }
+
+  .a-entry { padding: 9px 0; border-bottom: 1px solid var(--border-light); }
+  .a-entry:last-child { border-bottom: none; }
+  .a-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px; }
+  .a-zone { font-size: 12px; font-weight: 500; color: var(--ink); }
+  .a-tag { font-size: 9px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; padding: 2px 6px; }
+  .a-tag.critical { background: var(--danger-bg); color: var(--danger-text); border: 1px solid var(--danger-border); }
+  .a-tag.warning  { background: var(--warn-bg);   color: var(--warn-text);   border: 1px solid var(--warn-border); }
+  .a-tag.info     { background: var(--blue-tint);  color: var(--blue-mid);    border: 1px solid var(--blue-pale); }
+  .a-detail { font-size: 11px; font-weight: 300; color: var(--ink-mid); line-height: 1.55; margin-bottom: 3px; }
+  .a-action { font-size: 10px; font-weight: 500; color: var(--blue-mid); margin-bottom: 3px; letter-spacing: 0.03em; }
+  .a-meta { font-size: 9px; font-weight: 300; color: var(--khaki-deep); letter-spacing: 0.06em; }
+
+  .empty { font-size: 11px; font-weight: 300; color: var(--khaki-deep); padding: 8px 0; font-style: italic; }
+
+  .cell-popup { position: absolute; bottom: 16px; left: 14px; z-index: 1000; background: var(--white); border: 1px solid var(--border); padding: 12px 14px; min-width: 210px; display: none; pointer-events: none; box-shadow: 0 2px 12px rgba(0,0,0,0.07); }
+  .cell-popup.on { display: block; }
+  .cp-head { font-size: 12px; font-weight: 500; color: var(--blue); border-bottom: 1px solid var(--border-light); padding-bottom: 7px; margin-bottom: 8px; letter-spacing: 0.04em; }
+  .cp-row { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px; }
+  .cp-l { font-weight: 300; color: var(--ink-light); }
+  .cp-v { font-weight: 400; color: var(--ink); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Feldman</div>
+  <div class="logo-rule"></div>
+  <div class="logo-sub">Maritime Coverage Intelligence · Gryts Skärgård</div>
+  <div class="header-stats">
+    <div class="hstat">
+      <span class="hstat-label">Baseline obs</span>
+      <span class="hstat-value" id="baseline-count">loading...</span>
+    </div>
+    <div class="hstat">
+      <span class="hstat-label">Grid</span>
+      <span class="hstat-value" id="cell-count">—</span>
+    </div>
+    <div class="hstat">
+      <span class="hstat-label">UTC</span>
+      <span class="hstat-value" id="clock">—</span>
+    </div>
+    <div class="conn-badge">
+      <div class="conn-dot off" id="ais-dot"></div>
+      <span class="conn-text" id="ais-status">Connecting</span>
+    </div>
+  </div>
+</header>
+
+<div id="map">
+  <div class="map-stamp">
+    <div class="map-stamp-title">Gryts Skärgård</div>
+    <div class="map-stamp-sub">Surveillance sufficiency · live AIS</div>
+  </div>
+  <div class="baseline-badge" id="baseline-badge">Baseline: <span>loading</span></div>
+</div>
+
+<div class="cell-popup" id="cell-popup">
+  <div class="cp-head" id="cp-name">—</div>
+  <div id="cp-content"></div>
+</div>
+
+<aside>
+  <div class="s-block">
+    <div class="s-label">AIS contacts</div>
+    <div class="big-num" id="vessel-count">0</div>
+    <div class="big-sub">vessels in zone</div>
+  </div>
+
+  <div class="s-block">
+    <div class="s-label">Coverage sufficiency</div>
+    <div class="legend-track"></div>
+    <div class="legend-labels">
+      <span>Observed</span>
+      <span>Degrading</span>
+      <span>Blind</span>
+    </div>
+  </div>
+
+  <div class="s-block">
+    <div class="s-label">Priority zones</div>
+    <div id="priority-list"></div>
+  </div>
+
+  <div class="s-block" style="padding-bottom:6px">
+    <div class="s-label" style="margin-bottom:0">Anomaly log</div>
+  </div>
+
+  <div class="a-scroll" id="anomaly-list">
+    <div class="empty">Awaiting data stream...</div>
+  </div>
+</aside>
+
+<script>
+// ---- CONFIG (replace with your values) ----
+const AIS_API_KEY    = '74c44829611cadbf3448f8ba44febf113dca0f29';
+const SUPABASE_URL   = 'https://arjkrqwllymeoiiohsep.supabase.co';
+const SUPABASE_ANON  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFyamtycXdsbHltZW9paW9oc2VwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzMTY3NTcsImV4cCI6MjA5NTg5Mjc1N30.A9xT95expGlkgNgS32QgxQLnmVzGp2nf546bNyoo2Bs';
+// -------------------------------------------
+
+const { createClient } = supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_ANON);
+
+const CENTER = [58.035, 16.72];
+const BOUNDS = { minLat:57.85, maxLat:58.20, minLon:16.40, maxLon:17.05 };
+const ROWS = 9, COLS = 13;
+const dLat = (BOUNDS.maxLat - BOUNDS.minLat) / ROWS;
+const dLon = (BOUNDS.maxLon - BOUNDS.minLon) / COLS;
+
+const NAMES = {
+  '4,6':'Bockholmen','4,7':'Ämtö Channel','3,8':'Outer Ämtö',
+  '5,5':'Fyrudden','6,4':'Harstena N','3,5':'Inner Sound',
+  '2,9':'Häradskär','5,9':'Open Passage','4,5':'Valdemarsviken','6,7':'South Channel'
+};
+
+// baseline[r][c][hour] = { count, mmsis: Set, avg_sog }
+const baseline = {};
+let baselineLoaded = false;
+let baselineTotal = 0;
+
+const cells = {}, vessels = {};
+let anomalies = [];
+
+// ---- MAP INIT ----
+const map = L.map('map',{center:CENTER,zoom:11,zoomControl:true,attributionControl:false});
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{maxZoom:18,subdomains:'abcd'}).addTo(map);
+
+function initGrid() {
+  for (let r=0;r<ROWS;r++) {
+    baseline[r] = {};
+    for (let c=0;c<COLS;c++) {
+      baseline[r][c] = {};
+      const key=`${r},${c}`;
+      const la1=BOUNDS.minLat+r*dLat, lo1=BOUNDS.minLon+c*dLon;
+      const rect = L.rectangle([[la1,lo1],[la1+dLat,lo1+dLon]],{
+        color:'rgba(31,58,92,0.35)',weight:0.8,
+        fillColor:'#3a7a58',fillOpacity:0.1,interactive:true
+      }).addTo(map);
+      cells[key]={
+        rect, name:NAMES[key]||`Zone ${r}-${c}`,
+        lastSeen: Date.now() - Math.random()*600000,
+        vessels:[], observations:0, anomalyScore:0,
+        knownMmsis: new Set()
+      };
+      rect.on('click',()=>showPopup(key));
+    }
+  }
+  document.getElementById('cell-count').textContent = ROWS*COLS;
+}
+
+// ---- BASELINE LOADING FROM SUPABASE ----
+async function loadBaseline() {
+  document.getElementById('baseline-badge').innerHTML = 'Baseline: <span>loading...</span>';
+
+  const { data, error } = await db
+    .from('vessel_observations')
+    .select('cell_row,cell_col,hour_of_day,mmsi,sog')
+    .order('observed_at', { ascending: false })
+    .limit(50000);
+
+  if (error) {
+    console.error('Baseline load error:', error);
+    document.getElementById('baseline-badge').innerHTML = 'Baseline: <span style="color:#8b3030">error</span>';
+    return;
+  }
+
+  if (!data || data.length === 0) {
+    document.getElementById('baseline-badge').innerHTML = 'Baseline: <span style="color:#8b7030">building (< 1hr data)</span>';
+    document.getElementById('baseline-count').textContent = '0 obs';
+    baselineLoaded = false;
+    return;
+  }
+
+  // aggregate
+  for (const row of data) {
+    const { cell_row: r, cell_col: c, hour_of_day: h, mmsi, sog } = row;
+    if (!baseline[r] || !baseline[r][c]) continue;
+    if (!baseline[r][c][h]) baseline[r][c][h] = { count:0, mmsis: new Set(), sog_sum:0 };
+    baseline[r][c][h].count++;
+    baseline[r][c][h].mmsis.add(mmsi);
+    baseline[r][c][h].sog_sum += (sog || 0);
+
+    // populate knownMmsis into cells
+    const key = `${r},${c}`;
+    if (cells[key]) cells[key].knownMmsis.add(mmsi);
+  }
+
+  baselineTotal = data.length;
+  baselineLoaded = true;
+
+  const days = Math.round(data.length / 200); // rough estimate
+  document.getElementById('baseline-count').textContent = `${data.length.toLocaleString()} obs`;
+  document.getElementById('baseline-badge').innerHTML = `Baseline: <span>${data.length.toLocaleString()} observations</span>`;
+
+  console.log(`Baseline loaded: ${data.length} observations`);
+}
+
+// ---- ANOMALY DETECTION (real logic) ----
+function evaluateVessel(mmsi, lat, lon, sog, cellKey) {
+  if (!baselineLoaded || !cellKey) return null;
+  const [r, c] = cellKey.split(',').map(Number);
+  const cell = cells[cellKey];
+  const hour = new Date().getUTCHours();
+  const cellBaseline = baseline[r]?.[c]?.[hour];
+
+  const reasons = [];
+  let level = null;
+
+  // 1. Unknown MMSI — never seen in this cell
+  const isUnknown = !cell.knownMmsis.has(mmsi);
+
+  // 2. Stationary in normally active zone
+  const isStationary = sog < 0.5;
+  const normallyBusy = cellBaseline && cellBaseline.count > 5;
+  const avgSog = cellBaseline ? cellBaseline.sog_sum / cellBaseline.count : null;
+  const normallyMoving = avgSog !== null && avgSog > 1.5;
+
+  // 3. Active in normally quiet zone
+  const normallyQuiet = !cellBaseline || cellBaseline.count < 2;
+
+  if (isUnknown && isStationary && normallyBusy) {
+    reasons.push(`Unknown contact — stationary in active zone — no AIS history for this cell`);
+    level = 'critical';
+  } else if (isUnknown && normallyQuiet && sog < 2) {
+    reasons.push(`Unknown vessel in low-traffic zone — outside baseline traffic patterns`);
+    level = 'warning';
+  } else if (isUnknown && normallyBusy) {
+    reasons.push(`Unrecognised MMSI in monitored corridor — ${cellBaseline.mmsis.size} known contacts in this zone`);
+    level = 'info';
+  } else if (isStationary && normallyMoving && normallyBusy) {
+    reasons.push(`Known vessel stationary — zone normally shows avg ${avgSog.toFixed(1)} kn`);
+    level = 'warning';
+  }
+
+  if (!level) return null;
+
+  const action = level === 'critical'
+    ? `Recommended action: Deploy observation asset to ${cell.name}`
+    : level === 'warning'
+    ? `Recommended action: Monitor ${cell.name} — flag if stationary > 10 min`
+    : `Recommended action: Log and watch ${cell.name}`;
+
+  return { level, reason: reasons[0], action };
+}
+
+// ---- VESSEL UPSERT ----
+function upsertVessel(mmsi, lat, lon, name, sog) {
+  if (lat<BOUNDS.minLat||lat>BOUNDS.maxLat||lon<BOUNDS.minLon||lon>BOUNDS.maxLon) return;
+  const icon = L.divIcon({
+    className:'',
+    html:`<div style="width:6px;height:6px;border-radius:50%;background:#2e5280;border:1.5px solid rgba(46,82,128,0.4);"></div>`,
+    iconSize:[6,6],iconAnchor:[3,3]
+  });
+  if (vessels[mmsi]) { vessels[mmsi].setLatLng([lat,lon]); }
+  else {
+    vessels[mmsi]=L.marker([lat,lon],{icon})
+      .bindTooltip(name||mmsi,{className:'ftt',direction:'top'})
+      .addTo(map);
+    document.getElementById('vessel-count').textContent=Object.keys(vessels).length;
+  }
+
+  const ck = getCell(lat, lon);
+  if (ck && cells[ck]) {
+    const cell = cells[ck];
+    cell.lastSeen = Date.now();
+    cell.observations++;
+    if (!cell.vessels.includes(mmsi)) cell.vessels.push(mmsi);
+
+    // run anomaly check
+    const result = evaluateVessel(mmsi, lat, lon, sog, ck);
+    if (result) {
+      cell.anomalyScore = Math.min(1, cell.anomalyScore + (result.level === 'critical' ? 0.8 : 0.4));
+      addAnomaly(result.level, cell.name, mmsi, result.reason, result.action);
+    }
+  }
+}
+
+function getCell(lat, lon) {
+  const r=Math.floor((lat-BOUNDS.minLat)/dLat);
+  const c=Math.floor((lon-BOUNDS.minLon)/dLon);
+  if(r<0||r>=ROWS||c<0||c>=COLS) return null;
+  return `${r},${c}`;
+}
+
+// ---- ANOMALY LOG ----
+function addAnomaly(level, zone, mmsi, detail, action) {
+  if (anomalies.find(a=>a.mmsi===mmsi && a.zone===zone)) return;
+  anomalies.unshift({level,zone,mmsi,detail,action,time:new Date()});
+  if (anomalies.length>15) anomalies.pop();
+  renderAnomalies();
+}
+
+function renderAnomalies() {
+  const el=document.getElementById('anomaly-list');
+  if(!anomalies.length){el.innerHTML='<div class="empty">No anomalies detected</div>';return;}
+  el.innerHTML=anomalies.map(a=>`
+    <div class="a-entry">
+      <div class="a-top">
+        <span class="a-zone">${a.zone}</span>
+        <span class="a-tag ${a.level}">${a.level}</span>
+      </div>
+      <div class="a-detail">${a.detail}</div>
+      <div class="a-action">→ ${a.action}</div>
+      <div class="a-meta">${a.mmsi} · ${a.time.toUTCString().slice(17,25)} UTC</div>
+    </div>`).join('');
+}
+
+// ---- GRID TICK ----
+function sufficiency(cell) {
+  return Math.max(0, 1-(Date.now()-cell.lastSeen)/1000/1800);
+}
+
+function cellColor(s, anom) {
+  if (anom>0.5) return {fill:'#8b3030',op:0.32};
+  if (s>0.65)   return {fill:'#2e6b48',op:0.13};
+  if (s>0.35)   return {fill:'#8b7030',op:0.22};
+  if (s>0.15)   return {fill:'#7a3a20',op:0.26};
+  return               {fill:'#8b3030',op:0.32};
+}
+
+function tick() {
+  const ranked=[];
+  for (const [k,cell] of Object.entries(cells)) {
+    const s=sufficiency(cell);
+    const {fill,op}=cellColor(s,cell.anomalyScore);
+    cell.rect.setStyle({fillColor:fill,fillOpacity:op});
+    ranked.push({k,s,name:cell.name,anom:cell.anomalyScore});
+  }
+  ranked.sort((a,b)=>a.s-b.s);
+  renderPriority(ranked.slice(0,6));
+}
+
+function renderPriority(list) {
+  document.getElementById('priority-list').innerHTML = list.map((e,i)=>{
+    const pct=Math.round((1-e.s)*100);
+    const col=e.anom>0.5?'#8b3030':pct>70?'#8b7030':'#4a7aaa';
+    return `<div class="p-row">
+      <span class="p-num">${i+1}</span>
+      <div class="p-track"><div class="p-fill" style="width:${pct}%;background:${col}"></div></div>
+      <span class="p-name">${e.name}</span>
+    </div>`;
+  }).join('');
+}
+
+function showPopup(key) {
+  const cell=cells[key]; if(!cell) return;
+  const s=sufficiency(cell);
+  const min=Math.round((Date.now()-cell.lastSeen)/60000);
+  const hour=new Date().getUTCHours();
+  const [r,c]=key.split(',').map(Number);
+  const bl=baseline[r]?.[c]?.[hour];
+  document.getElementById('cp-name').textContent=cell.name;
+  document.getElementById('cp-content').innerHTML=`
+    <div class="cp-row"><span class="cp-l">Sufficiency</span><span class="cp-v">${Math.round(s*100)}%</span></div>
+    <div class="cp-row"><span class="cp-l">Last observed</span><span class="cp-v">${min}m ago</span></div>
+    <div class="cp-row"><span class="cp-l">Live contacts</span><span class="cp-v">${cell.vessels.length}</span></div>
+    <div class="cp-row"><span class="cp-l">Known MMSIs</span><span class="cp-v">${cell.knownMmsis.size}</span></div>
+    <div class="cp-row"><span class="cp-l">Baseline this hour</span><span class="cp-v">${bl?bl.count+' obs':'no data'}</span></div>
+    <div class="cp-row"><span class="cp-l">Status</span><span class="cp-v" style="color:${cell.anomalyScore>0.5?'#8b3030':'#2e6b48'}">${cell.anomalyScore>0.5?'Flagged':'Clear'}</span></div>`;
+  const p=document.getElementById('cell-popup');
+  p.classList.add('on');
+  setTimeout(()=>p.classList.remove('on'),6000);
+}
+
+// ---- AIS LIVE FEED ----
+function connectAIS() {
+  const dot=document.getElementById('ais-dot');
+  const st=document.getElementById('ais-status');
+  dot.className='conn-dot warn'; st.textContent='Connecting';
+  const ws=new WebSocket('wss://stream.aisstream.io/v0/stream');
+  ws.onopen=()=>{
+    dot.className='conn-dot'; st.textContent='Live';
+    ws.send(JSON.stringify({
+      APIKey:AIS_API_KEY,
+      BoundingBoxes:[[[BOUNDS.minLat,BOUNDS.minLon],[BOUNDS.maxLat,BOUNDS.maxLon]]],
+      FilterMessageTypes:['PositionReport']
+    }));
+  };
+  ws.onmessage=evt=>{
+    try{
+      const msg=JSON.parse(evt.data);
+      if(msg.MessageType!=='PositionReport') return;
+      const p=msg.Message?.PositionReport, m=msg.MetaData;
+      if(!p||!m) return;
+      upsertVessel(String(m.MMSI),p.Latitude,p.Longitude,m.ShipName?.trim(),p.Sog||0);
+    }catch(e){}
+  };
+  ws.onerror=()=>{dot.className='conn-dot off';st.textContent='Error';};
+  ws.onclose=()=>{dot.className='conn-dot warn';st.textContent='Reconnecting';setTimeout(connectAIS,4000);};
+}
+
+// ---- TOOLTIP STYLE ----
+const ts=document.createElement('style');
+ts.textContent=`.ftt{background:#fff;border:1px solid #d0cdc5;color:#1a2530;font-family:'DM Sans',sans-serif;font-size:10px;font-weight:400;padding:4px 8px;border-radius:0;box-shadow:none;}.ftt::before{display:none;}`;
+document.head.appendChild(ts);
+
+// ---- BOOT ----
+setInterval(()=>{document.getElementById('clock').textContent=new Date().toUTCString().slice(17,25)+' UTC';},1000);
+setInterval(tick,5000);
+
+initGrid();
+loadBaseline().then(()=>{
+  connectAIS();
+});
+
+// reload baseline every 30 min to pick up new harvester runs
+setInterval(loadBaseline, 30*60*1000);
+</script>
+</body>
+</html>
