@@ -1,31 +1,26 @@
-"""
-Feldman AIS Harvester
-Runs hourly via GitHub Actions.
-Pulls live AIS data for Gryt bounding box, writes to Supabase.
-"""
 
 import asyncio
 import json
 import os
 import websockets
 import httpx
-from datetime import datetime, timezone
-
+from datetime import datetime, timezone, timedelta
 
 AIS_API_KEY   = os.environ["AIS_API_KEY"]
 SUPABASE_URL  = os.environ["SUPABASE_URL"]
-SUPABASE_KEY  = os.environ["SUPABASE_SERVICE_KEY"]  
+SUPABASE_KEY  = os.environ["SUPABASE_SERVICE_KEY"]
+GFW_API_KEY   = os.environ["GFW_API_KEY"]
 
 BOUNDS = {
-    "minLat": 57.85, "maxLat": 58.20,
-    "minLon": 16.40, "maxLon": 17.05
+    "minLat": 55.50, "maxLat": 56.10,
+    "minLon": 12.50, "maxLon": 13.10
 }
 
 ROWS, COLS = 9, 13
 d_lat = (BOUNDS["maxLat"] - BOUNDS["minLat"]) / ROWS
 d_lon = (BOUNDS["maxLon"] - BOUNDS["minLon"]) / COLS
 
-HARVEST_SECONDS = 300  # collect for 5 minutes per run
+HARVEST_SECONDS = 3300
 
 def get_cell(lat, lon):
     r = int((lat - BOUNDS["minLat"]) / d_lat)
@@ -34,10 +29,9 @@ def get_cell(lat, lon):
         return r, c
     return None, None
 
-async def harvest():
+async def harvest_ais():
     observations = []
     seen_mmsi = set()
-
     uri = "wss://stream.aisstream.io/v0/stream"
     print(f"Connecting to AISstream for {HARVEST_SECONDS}s...")
 
@@ -83,16 +77,84 @@ async def harvest():
                         "cell_row": r,
                         "cell_col": c,
                         "hour_of_day": now.hour,
-                        "observed_at": now.isoformat()
+                        "observed_at": now.isoformat(),
+                        "source": "ais",
+                        "is_dark": False
                     })
                 except asyncio.TimeoutError:
                     continue
 
     except Exception as e:
-        print(f"WebSocket error: {e}")
+        print(f"AIS WebSocket error: {e}")
 
-    print(f"Collected {len(observations)} unique vessel observations")
-    return observations
+    print(f"AIS: collected {len(observations)} unique vessel observations")
+    return observations, seen_mmsi
+
+async def fetch_sar_detections():
+    print("Fetching GFW SAR detections...")
+    end_date = datetime.now(timezone.utc)
+    start_date = end_date - timedelta(days=6)
+
+    headers = {
+        "Authorization": f"Bearer {GFW_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    params = {
+        "datasets[0]": "public-global-sar-detections:latest",
+        "date-range": f"{start_date.strftime('%Y-%m-%d')},{end_date.strftime('%Y-%m-%d')}",
+        "bbox": f"{BOUNDS['minLon']},{BOUNDS['minLat']},{BOUNDS['maxLon']},{BOUNDS['maxLat']}",
+        "resolution": "HIGH"
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(
+                "https://gateway.api.globalfishingwatch.org/v3/4wings/report",
+                headers=headers,
+                params=params,
+                timeout=30
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                detections = data.get("entries", []) or data.get("data", []) or []
+                print(f"SAR: got {len(detections)} detections")
+                return detections
+            else:
+                print(f"SAR fetch failed: {resp.status_code} {resp.text[:200]}")
+                return []
+        except Exception as e:
+            print(f"SAR fetch error: {e}")
+            return []
+
+def find_dark_vessels(sar_detections, ais_mmsi_set):
+    dark = []
+    now = datetime.now(timezone.utc)
+    for det in sar_detections:
+        lat = det.get("lat") or det.get("latitude")
+        lon = det.get("lon") or det.get("longitude")
+        matched = det.get("matched", False) or det.get("matchedVessel")
+        if not lat or not lon or matched:
+            continue
+        r, c = get_cell(lat, lon)
+        if r is None:
+            continue
+        dark.append({
+            "mmsi": f"SAR-DARK-{int(lat*1000)}-{int(lon*1000)}",
+            "ship_name": None,
+            "lat": lat,
+            "lon": lon,
+            "sog": None,
+            "cog": None,
+            "cell_row": r,
+            "cell_col": c,
+            "hour_of_day": now.hour,
+            "observed_at": now.isoformat(),
+            "source": "sar",
+            "is_dark": True
+        })
+    print(f"Dark vessels found: {len(dark)}")
+    return dark
 
 async def write_to_supabase(observations):
     if not observations:
@@ -107,7 +169,6 @@ async def write_to_supabase(observations):
     }
 
     async with httpx.AsyncClient() as client:
-        # batch insert
         resp = await client.post(
             f"{SUPABASE_URL}/rest/v1/vessel_observations",
             headers=headers,
@@ -117,9 +178,8 @@ async def write_to_supabase(observations):
         if resp.status_code in (200, 201):
             print(f"Inserted {len(observations)} rows OK")
         else:
-            print(f"Insert failed: {resp.status_code} {resp.text}")
+            print(f"Insert failed: {resp.status_code} {resp.text[:200]}")
 
-        # cleanup old rows — inside the same client context
         cutoff = datetime.now(timezone.utc).strftime("%Y-%m-01T00:00:00+00:00")
         del_resp = await client.delete(
             f"{SUPABASE_URL}/rest/v1/vessel_observations",
@@ -130,8 +190,13 @@ async def write_to_supabase(observations):
         print(f"Cleanup status: {del_resp.status_code}")
 
 async def main():
-    obs = await harvest()
-    await write_to_supabase(obs)
+    ais_task = asyncio.create_task(harvest_ais())
+    sar_task = asyncio.create_task(fetch_sar_detections())
+    (ais_obs, ais_mmsis), sar_detections = await asyncio.gather(ais_task, sar_task)
+    dark_obs = find_dark_vessels(sar_detections, ais_mmsis)
+    all_obs = ais_obs + dark_obs
+    print(f"Total: {len(all_obs)} ({len(ais_obs)} AIS + {len(dark_obs)} dark)")
+    await write_to_supabase(all_obs)
 
 if __name__ == "__main__":
     asyncio.run(main())
