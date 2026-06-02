@@ -20,7 +20,7 @@ ROWS, COLS = 9, 13
 d_lat = (BOUNDS["maxLat"] - BOUNDS["minLat"]) / ROWS
 d_lon = (BOUNDS["maxLon"] - BOUNDS["minLon"]) / COLS
  
-HARVEST_SECONDS = 1800  # 30 minutes
+HARVEST_SECONDS = 3300  # 55 minutes v3
  
 def get_cell(lat, lon):
     r = int((lat - BOUNDS["minLat"]) / d_lat)
