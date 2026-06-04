@@ -180,15 +180,6 @@ async def write_to_supabase(observations):
         else:
             print(f"Insert failed: {resp.status_code} {resp.text[:200]}")
 
-        cutoff = datetime.now(timezone.utc).strftime("%Y-%m-01T00:00:00+00:00")
-        del_resp = await client.delete(
-            f"{SUPABASE_URL}/rest/v1/vessel_observations",
-            headers=headers,
-            params={"observed_at": f"lt.{cutoff}"},
-            timeout=30
-        )
-        print(f"Cleanup status: {del_resp.status_code}")
-
 async def main():
     ais_task = asyncio.create_task(harvest_ais())
     sar_task = asyncio.create_task(fetch_sar_detections())
